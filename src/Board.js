@@ -21,6 +21,7 @@ export default class Board extends React.Component {
       complete: React.createRef(),
     }
   }
+
   getClients() {
     return [
       ['1','Stark, White and Abbott','Cloned Optimal Architecture', 'in-progress'],
@@ -50,6 +51,49 @@ export default class Board extends React.Component {
       status: companyDetails[3],
     }));
   }
+
+  componentDidMount() {
+    const { backlog, inProgress, complete } = this.swimlanes;
+
+    this.drake = Dragula([
+      backlog.current,
+      inProgress.current,
+      complete.current,
+    ]);
+
+    this.drake.on('drop', (el, target) => {
+      let newStatus;
+      if (target === backlog.current)          newStatus = 'backlog';
+      else if (target === inProgress.current)  newStatus = 'in-progress';
+      else if (target === complete.current)    newStatus = 'complete';
+      else return;
+
+      const cardId = el.getAttribute('data-id');
+
+      this.setState(prevState => {
+        const allClients = [
+          ...prevState.clients.backlog,
+          ...prevState.clients.inProgress,
+          ...prevState.clients.complete,
+        ].map(client =>
+          client.id === cardId ? { ...client, status: newStatus } : client
+        );
+
+        return {
+          clients: {
+            backlog:    allClients.filter(c => !c.status || c.status === 'backlog'),
+            inProgress: allClients.filter(c => c.status === 'in-progress'),
+            complete:   allClients.filter(c => c.status === 'complete'),
+          }
+        };
+      });
+    });
+  }
+
+  componentWillUnmount() {
+    if (this.drake) this.drake.destroy();
+  }
+
   renderSwimlane(name, clients, ref) {
     return (
       <Swimlane name={name} clients={clients} dragulaRef={ref}/>
