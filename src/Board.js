@@ -7,91 +7,105 @@ import './Board.css';
 export default class Board extends React.Component {
   constructor(props) {
     super(props);
-    const clients = this.getClients();
     this.state = {
       clients: {
-        backlog: clients.filter(client => !client.status || client.status === 'backlog'),
-        inProgress: clients.filter(client => client.status && client.status === 'in-progress'),
-        complete: clients.filter(client => client.status && client.status === 'complete'),
+        backlog: [],
+        inProgress: [],
+        complete: [],
       }
-    }
+    };
     this.swimlanes = {
       backlog: React.createRef(),
       inProgress: React.createRef(),
       complete: React.createRef(),
-    }
-  }
-
-  getClients() {
-    return [
-      ['1','Stark, White and Abbott','Cloned Optimal Architecture', 'in-progress'],
-      ['2','Wiza LLC','Exclusive Bandwidth-Monitored Implementation', 'complete'],
-      ['3','Nolan LLC','Vision-Oriented 4Thgeneration Graphicaluserinterface', 'backlog'],
-      ['4','Thompson PLC','Streamlined Regional Knowledgeuser', 'in-progress'],
-      ['5','Walker-Williamson','Team-Oriented 6Thgeneration Matrix', 'in-progress'],
-      ['6','Boehm and Sons','Automated Systematic Paradigm', 'backlog'],
-      ['7','Runolfsson, Hegmann and Block','Integrated Transitional Strategy', 'backlog'],
-      ['8','Schumm-Labadie','Operative Heuristic Challenge', 'backlog'],
-      ['9','Kohler Group','Re-Contextualized Multi-Tasking Attitude', 'backlog'],
-      ['10','Romaguera Inc','Managed Foreground Toolset', 'backlog'],
-      ['11','Reilly-King','Future-Proofed Interactive Toolset', 'complete'],
-      ['12','Emard, Champlin and Runolfsdottir','Devolved Needs-Based Capability', 'backlog'],
-      ['13','Fritsch, Cronin and Wolff','Open-Source 3Rdgeneration Website', 'complete'],
-      ['14','Borer LLC','Profit-Focused Incremental Orchestration', 'backlog'],
-      ['15','Emmerich-Ankunding','User-Centric Stable Extranet', 'in-progress'],
-      ['16','Willms-Abbott','Progressive Bandwidth-Monitored Access', 'in-progress'],
-      ['17','Brekke PLC','Intuitive User-Facing Customerloyalty', 'complete'],
-      ['18','Bins, Toy and Klocko','Integrated Assymetric Software', 'backlog'],
-      ['19','Hodkiewicz-Hayes','Programmable Systematic Securedline', 'backlog'],
-      ['20','Murphy, Lang and Ferry','Organized Explicit Access', 'backlog'],
-    ].map(companyDetails => ({
-      id: companyDetails[0],
-      name: companyDetails[1],
-      description: companyDetails[2],
-      status: companyDetails[3],
-    }));
+    };
   }
 
   componentDidMount() {
-    const { backlog, inProgress, complete } = this.swimlanes;
+    // Fetch from backend on page load
+    this.fetchClients();
 
+    // Set up Dragula
     this.drake = Dragula([
-      backlog.current,
-      inProgress.current,
-      complete.current,
+      this.swimlanes.backlog.current,
+      this.swimlanes.inProgress.current,
+      this.swimlanes.complete.current,
     ]);
 
-    this.drake.on('drop', (el, target) => {
-      let newStatus;
-      if (target === backlog.current)          newStatus = 'backlog';
-      else if (target === inProgress.current)  newStatus = 'in-progress';
-      else if (target === complete.current)    newStatus = 'complete';
-      else return;
-
-      const cardId = el.getAttribute('data-id');
-
-      this.setState(prevState => {
-        const allClients = [
-          ...prevState.clients.backlog,
-          ...prevState.clients.inProgress,
-          ...prevState.clients.complete,
-        ].map(client =>
-          client.id === cardId ? { ...client, status: newStatus } : client
-        );
-
-        return {
-          clients: {
-            backlog:    allClients.filter(c => !c.status || c.status === 'backlog'),
-            inProgress: allClients.filter(c => c.status === 'in-progress'),
-            complete:   allClients.filter(c => c.status === 'complete'),
-          }
-        };
-      });
+    this.drake.on('drop', (el, target, source, sibling) => {
+      this.updateClient(el, target, source, sibling);
     });
   }
 
   componentWillUnmount() {
-    if (this.drake) this.drake.destroy();
+    this.drake.remove();
+  }
+
+  fetchClients() {
+    fetch('http://localhost:3001/api/v1/clients')
+      .then(res => res.json())
+      .then(clients => {
+        const sorted = clients.sort((a, b) => a.priority - b.priority);
+        this.setState({
+          clients: {
+            backlog:    sorted.filter(c => c.status === 'backlog'),
+            inProgress: sorted.filter(c => c.status === 'in-progress'),
+            complete:   sorted.filter(c => c.status === 'complete'),
+          }
+        });
+      })
+      .catch(err => console.error('Failed to fetch clients:', err));
+  }
+
+  updateClient(el, target, _, sibling) {
+    // Revert DOM — React will re-render from state
+    this.drake.cancel(true);
+
+    // Find the new swimlane status
+    let targetStatus = 'backlog';
+    if (target === this.swimlanes.inProgress.current) targetStatus = 'in-progress';
+    else if (target === this.swimlanes.complete.current) targetStatus = 'complete';
+
+    const cardId = parseInt(el.dataset.id, 10);
+
+    // Calculate new priority based on drop position
+    const allClients = [
+      ...this.state.clients.backlog,
+      ...this.state.clients.inProgress,
+      ...this.state.clients.complete,
+    ];
+
+    const targetLaneClients = allClients
+      .filter(c => c.status === targetStatus && c.id !== cardId)
+      .sort((a, b) => a.priority - b.priority);
+
+    let targetPriority;
+    if (sibling) {
+      const siblingId = parseInt(sibling.dataset.id, 10);
+      const siblingIndex = targetLaneClients.findIndex(c => c.id === siblingId);
+      targetPriority = siblingIndex === -1 ? targetLaneClients.length + 1 : siblingIndex + 1;
+    } else {
+      targetPriority = targetLaneClients.length + 1;
+    }
+
+    // Call backend to persist the change
+    fetch(`http://localhost:3001/api/v1/clients/${cardId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: targetStatus, priority: targetPriority }),
+    })
+      .then(res => res.json())
+      .then(updatedClients => {
+        const sorted = updatedClients.sort((a, b) => a.priority - b.priority);
+        this.setState({
+          clients: {
+            backlog:    sorted.filter(c => c.status === 'backlog'),
+            inProgress: sorted.filter(c => c.status === 'in-progress'),
+            complete:   sorted.filter(c => c.status === 'complete'),
+          }
+        });
+      })
+      .catch(err => console.error('Failed to update client:', err));
   }
 
   renderSwimlane(name, clients, ref) {
